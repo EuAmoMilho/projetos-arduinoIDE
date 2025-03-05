@@ -84,7 +84,6 @@ const unsigned char edra_logo [] PROGMEM = {
 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
-
 const byte numChars = 32;
 char receivedChars[numChars];
 
@@ -98,13 +97,13 @@ double corrente = 0.0,
 const int DTpin = 16,
           SCKpin = 4,
           escpin = 18;
-          // pinos do oLED: SCL -> D22; SDA -> D21; (n precisa declarar no codigo)
+          // pinos do oLED: SCL(SCK) -> D22; SDA -> D21; (n precisa declarar no codigo)
 
-float hxfactor = 0; //fator de calibracao*******
+float hxfactor = 0.0; //fator de calibracao*******
 
 unsigned long previousMillis = 0;
 
-const long intervalo = 10000;
+const long intervalo = 15000;
 
 Servo ESC;
 
@@ -113,17 +112,18 @@ HX711 carga;
 BluetoothSerial serialBT;
 
 void setup(){
+  serialBT.begin("bancada_de_testes");
 
   // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { 
-    Serial.println(F("SSD1306 allocation failed"));
+    serialBT.println(F("SSD1306 allocation failed"));
     for(;;); // Don't proceed, loop forever
   }
   
   display.clearDisplay();
-  display.drawBitmap(1, 1, edra_logo, SCREEN_WIDTH, SCREEN_HEIGHT, 1);
+  display.drawBitmap(0, 0, edra_logo, SCREEN_WIDTH, SCREEN_HEIGHT, 1);
   display.display();
-
+  
   delay(5000);
   
   ESC.attach(escpin);
@@ -131,28 +131,33 @@ void setup(){
 
   carga.begin(DTpin, SCKpin);
   
-  while(hxfactor == 0){ setCaliFactor(); delay(500); }
+  while(hxfactor == 0.0){
+    setCaliFactor();
+    hxfactor = atof(receivedChars);
+    
+    while(serialBT.available() > 0){ serialBT.read(); }
+    
+    serialBT.println(receivedChars);
+    
+    delay(500);
+  }
   
   carga.set_scale(hxfactor); //fator de calibracao - rodar codigo p/calibrar
   carga.tare(); // define o valor do 'peso 0' da balança
   
   carga.power_down();
-  
-
-  serialBT.begin("bancada_de_testes");
 
   delay(5000);
 
   serialBT.print("ESC em ");
-      serialBT.print(esc_percent);
-      serialBT.println("% da velocidade");
-      serialBT.print("'peso' do motor: ");
-      serialBT.print(w);
-      serialBT.println(" (g)");
+  serialBT.print(esc_percent);
+  serialBT.println("% da velocidade");
+  serialBT.print("'peso' do motor: ");
+  serialBT.print(w);
+  serialBT.println(" (g)");
 }
 
 void loop(){
-  
   unsigned long currentMillis = millis();
 
   if(currentMillis - previousMillis >= intervalo){
@@ -179,38 +184,19 @@ void loop(){
     esc_percent = 0;
   }
 
-  set_escBT();
+  set_esc();
 
   ESC.writeMicroseconds(escspd);
   
   delay(20);
 }
 
-
-void set_escBT(){
-  static byte i = 0;
-  char endmarker = '\n';
-  char rc;
+void set_esc(){
   int recnum = 0;
-  
-  if (serialBT.available() > 0){
-    rc = serialBT.read();
-
-    if(rc!=endmarker){
-      receivedChars[i] = rc;
-      i++;
-
-      if(i>=numChars){
-        i = numChars - 1;
-      }
-    } else {
-      receivedChars[i] = '\0';
-      i = 0;
-    }
-  
-  recnum = atoi(receivedChars);
-  esc_percent = constrain(recnum, 0, 100);
-  escspd = map(esc_percent, 0, 100, 1000, 2000);
+  if (read_serial()){
+    recnum = atoi(receivedChars);
+    esc_percent = constrain(recnum, 0, 100);
+    escspd = map(esc_percent, 0, 100, 1000, 2000);
   }
 }
 
@@ -218,25 +204,28 @@ void setCaliFactor(){
   if(carga.is_ready()){
 
     display.clearDisplay();
-    display.setTextSize(3);
+    display.setTextSize(2);
     display.setTextColor(WHITE);
     display.setCursor(0,0);
     
     carga.set_scale();
 
-    display.print("REMOVER PESOS DA BALANÇA");
-    serialBT.println("Calibrando... remova todos os pesos da balança.");
+    display.print("REMOVER \nPESOS\nDA \nBALANCA");
+    serialBT.println("Calibrando... remova todos os pesos da balança.\n");
+    display.display();
     
-    delay(6000);
+    delay(3000);
     
     display.clearDisplay();
+    display.setCursor(0,0);
     
     carga.tare();
-
-    display.print("COLOQUE PESO CONHECIDO\nSOBRE A BALANÇA");
-    serialBT.println("Calibragem concluida. Agora, coloque um peso conhecido na balança.");
-
-    delay(6000);
+    
+    display.print("COLOQUE\nPESO\nCONHECIDO");
+    serialBT.println("Calibragem concluida. Agora, coloque um peso conhecido na balança.\n");
+    display.display();
+    
+    delay(10000);
     
     display.clearDisplay();
     
@@ -244,44 +233,22 @@ void setCaliFactor(){
 
     serialBT.print("Resultado (anote esse numero): ");
     serialBT.println(reading);
+    serialBT.println("Divida o resultado pelo valor do peso conhecido (em gramas)\n 1)insira no terminal\n 2)digite '0' para recalibrar.");
 
-    serialBT.println("Divida o resultado pelo valor do peso conhecido (em gramas) e insira no terminal.");
-
+    display.setTextSize(1);
+    display.setCursor(0,0);
     display.println("RESULTADO:");
     display.println(reading);
-    display.println("divida pelo peso conhecido (em g)");
-    display.println();
-    display.print("Insira o valor no terminal.");
-    
-    for(int j=0; j<1; ){
-      
-      static byte i = 0;
-      char endmarker = '\n';
-      char rc;
-  
-      if (serialBT.available() > 0){
-        rc = serialBT.read();
-    
-        if(rc!=endmarker){
-          receivedChars[i] = rc;
-          i++;
-    
-          if(i>=numChars){
-            i = numChars - 1;
-          }
-        } else {
-          receivedChars[i] = '\0';
-          i = 0;
-        }
-      }
-      
-      hxfactor = atof(receivedChars);
+    display.println("divida por p. conhec.");
+    display.println("e digite \nno terminal,");
+    display.print("ou,\n(0) p/ recalibrar");
+    display.display();
 
-      j++;
+    while(!read_serial()){
+      delay(100);
     }
+    
   } else { serialBT.println("HX711 not found");}
-  
-  delay(1000);
 }
 
 void drawData() {
@@ -298,5 +265,28 @@ void drawData() {
   display.println(w);
 
   display.display();
-  delay(2000);
+}
+
+int read_serial(){
+  static byte i = 0;
+  char endmarker = '\n';
+  char rc;
+  
+  while (serialBT.available() > 0){
+    rc = serialBT.read();
+
+    if(rc!=endmarker){
+      receivedChars[i] = rc;
+      i++;
+
+      if(i>=numChars){
+        i = numChars - 1;
+      }
+    } else {
+      receivedChars[i] = '\0';
+      i = 0;
+      return 1;
+    }
+  }
+  return 0;
 }
